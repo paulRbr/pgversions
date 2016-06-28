@@ -1,0 +1,200 @@
+#!/bin/bash -e
+
+function usage() {
+  cat <<EOF
+USAGE
+ $0 <command> <options>"
+
+COMMANDS
+ initdb
+ start
+ stop
+ destroy
+
+OPTIONS
+  -v postgresl version (e.g. 9.1, 9.5)
+
+ initdb
+  Specifying this params will create a database volume.
+  -d database name
+  -u username
+  -p password
+
+EOF
+  exit 1
+}
+
+function list_running() {
+  local running=$(docker ps --format="table {{.Names}}\t{{.ID}}" | grep pg-9.[0-9])
+  echo "RUNNING DATABASES"
+  if [ ! -z "$running" ]; then
+    start_green
+    echo "$running" | while read container; do
+      ipaddr=$(docker inspect $(echo "$container" | cut -d" " -f1) | grep -oP 'IPAddress[": ]+?\K([0-9.]+)' | head -n1)
+      echo -e "$ipaddr\t\c"
+      echo -e "$container"
+    done
+    stop_color
+  else
+    start_red
+    echo "No databases running"
+    stop_color
+  fi
+  echo
+}
+
+function list_volumes() {
+  local running=$(docker volume ls -q | grep pg-9.[0-9]-data)
+  echo "EXISTING VOLUMES"
+  if [ ! -z "$running" ]; then
+    start_green
+    echo "$running"
+    stop_color
+  else
+    start_red
+    echo "No database volumes"
+    stop_red
+  fi
+  echo
+}
+
+function start_green() {
+  echo -e "\033[32m\c"
+}
+function start_blue() {
+  echo -e "\033[34m\c"
+}
+function start_red() {
+  echo -e "\033[31m\c"
+}
+function stop_color() {
+  echo -e "\033[m\c"
+}
+
+# Allowed commands
+case $1 in
+    status|start|stop|destroy|initdb) cmd=$1 ;;
+    *) usage ;;
+esac
+shift 1
+
+# Allowed options
+while getopts "v:d:u:p:t" option; do
+  case $option in
+    d) DATABASE_NAME=$OPTARG ;;
+    u) DATABASE_USER=$OPTARG ;;
+    p) DATABASE_PASSWORD=$OPTARG ;;
+    v) PGVERSION=$OPTARG ;;
+    t) TALK=true ;;
+    ?) usage ;;
+  esac
+done
+
+if [ -z $PGVERSION ] && [ "$cmd" != "status" ]; then
+  usage
+fi
+
+function silent_docker {
+  if [ -z $TALK ]; then
+    docker "$@" > /dev/null 2>&1
+  else
+    docker "$@"
+  fi
+}
+function existing_database {
+  silent_docker inspect pg-$PGVERSION
+}
+function existing_volume {
+  silent_docker volume inspect pg-$PGVERSION-data
+}
+function create_volume {
+  if existing_volume; then
+    start_red
+    echo "WARNING: volume pg-$PGVERSION-data already exists!"
+    stop_color
+    exit 1
+  fi
+
+  # Create volume data
+  silent_docker volume create --name pg-$PGVERSION-data
+  silent_docker run --rm -ti -v pg-$PGVERSION-data:/tmp swcc/docker-postgresql:$PGVERSION touch /tmp/empty
+  start_green
+  echo "Docker volume pg-$PGVERSION-data created."
+  stop_color
+}
+function init_database {
+  if ! existing_volume; then
+    start_red
+    echo "WARNING: volume pg-$PGVERSION-data is missing!"
+    stop_color
+    exit 1
+  fi
+
+  if existing_database; then
+    start_red
+    echo "WARNING: database pg-$PGVERSION already initiated!"
+    stop_color
+    exit 1
+  fi
+
+  silent_docker run --detach --name pg-$PGVERSION -e DATABASE_NAME=$DATABASE_NAME -e DATABASE_USER=$DATABASE_USER -e DATABASE_PASSWORD=$DATABASE_PASSWORD -v pg-$PGVERSION-data:/var/lib/postgresql/$PGVERSION/main swcc/docker-postgresql:$PGVERSION
+
+  start_green
+  echo "Docker container pg-$PGVERSION running."
+  stop_color
+}
+function ctl_database {
+  if ! existing_database; then
+    if existing_volume && [ "$1" == "start" ]; then
+      silent_docker run --detach --name pg-$PGVERSION -v pg-$PGVERSION-data:/var/lib/postgresql/$PGVERSION/main swcc/docker-postgresql:$PGVERSION
+    else
+      start_red
+      echo "WARNING: database pg-$PGVERSION doesn't exist, try to initdb."
+      stop_color
+      exit 1
+    fi
+  fi
+
+  silent_docker $1 pg-$PGVERSION
+
+  start_blue
+  echo -e "Docker container pg-$PGVERSION \c"
+  case $1 in
+    start) echo "started." ;;
+    stop) echo "stopped." ;;
+  esac
+  stop_color
+}
+
+case $cmd in
+  status)
+    list_running
+    list_volumes
+    ;;
+  initdb)
+    if [ ! -z $DATABASE_NAME ] && [ ! -z $DATABASE_USER ] && [ ! -z $DATABASE_PASSWORD ]; then
+      create_volume
+      init_database
+    else
+      usage
+    fi
+    ;;
+  start)
+    ctl_database "start"
+    ;;
+  stop)
+    ctl_database "stop"
+    ;;
+  destroy)
+    if existing_database; then
+      ctl_database "stop"
+      silent_docker rm -f pg-$PGVERSION
+    fi
+    if existing_volume; then
+      silent_docker volume rm pg-$PGVERSION-data
+    fi
+    ;;
+  *)
+    usage
+    ;;
+esac
