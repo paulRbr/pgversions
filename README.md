@@ -43,7 +43,7 @@ postgres=#
 
 ```bash
 > multi_pg_ctl stop -v 9.4
-Docker container pg-9.1 stopped.
+Docker container pg-9.4 stopped.
 ```
 
 ### Destroy a postgres server
