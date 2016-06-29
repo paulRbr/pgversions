@@ -54,7 +54,7 @@ function list_volumes() {
   else
     start_red
     echo "No database volumes"
-    stop_red
+    stop_color
   fi
   echo
 }
