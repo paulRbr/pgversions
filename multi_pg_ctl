@@ -6,6 +6,7 @@ USAGE
  $0 <command> <options>"
 
 COMMANDS
+ status
  initdb
  start
  stop
