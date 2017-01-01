@@ -9,6 +9,8 @@ COMMANDS
  status
  initdb
  start
+ psql
+ shell
  stop
  destroy
 
@@ -74,7 +76,7 @@ function stop_color() {
 
 # Allowed commands
 case $1 in
-    status|start|stop|destroy|initdb) cmd=$1 ;;
+    status|start|stop|psql|shell|destroy|initdb) cmd=$1 ;;
     *) usage ;;
 esac
 shift 1
@@ -166,6 +168,22 @@ function ctl_database {
   esac
   stop_color
 }
+function postgres_prompt {
+  local bin="$1"
+
+  if ! existing_database; then
+    if existing_volume; then
+      silent_docker run --detach --name pg-$PGVERSION -v pg-$PGVERSION-data:/var/lib/postgresql/$PGVERSION/main swcc/docker-postgresql:$PGVERSION
+    else
+      start_red
+      echo "WARNING: database pg-$PGVERSION doesn't exist, try to initdb."
+      stop_color
+      exit 1
+    fi
+  fi
+
+  docker exec -ti pg-$PGVERSION su - postgres -c "$bin"
+}
 
 case $cmd in
   status)
@@ -185,6 +203,12 @@ case $cmd in
     ;;
   stop)
     ctl_database "stop"
+    ;;
+  psql)
+    postgres_prompt "psql"
+    ;;
+  shell)
+    postgres_prompt "/bin/bash"
     ;;
   destroy)
     if existing_database; then
